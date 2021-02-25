@@ -37,7 +37,7 @@ def ensure_divisibility(numerator, denominator):
         numerator, denominator)
 
 
-def initialize_groups(model_parallel_size_=1, expert_parallel_size_=1, mpu=None):
+def initialize(model_parallel_size_=1, expert_parallel_size_=1, mpu=None):
     if mpu is not None:
         initialize_model_and_expert_parallel(model_parallel_size_,
                                              expert_parallel_size_,

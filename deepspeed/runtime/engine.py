@@ -540,10 +540,8 @@ class DeepSpeedEngine(Module):
                 self.num_experts = module.num_experts
                 break
 
-        assert self.mpu is not None and groups.expert_parallel_is_initialized(), "Cannot pass mpu when deepspeed groups are already initialized"
-
-        if self.mpu is None and not groups.model_parallel_is_initialized():
-            groups.initialize_model_parallel(1)
+        if not groups.is_initialized():
+            groups.initialize(mpu)
 
         self.data_parallel_group = groups.get_data_parallel_group()
         self.dp_world_size = groups.get_data_parallel_world_size()
