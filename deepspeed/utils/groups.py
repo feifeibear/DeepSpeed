@@ -1,4 +1,9 @@
-# coding=utf-8
+'''
+Copyright 2021 The Microsoft DeepSpeed Team
+'''
+
+# The file has been adapated from https://github.com/NVIDIA/Megatron-LM and retains the following license from the original file
+
 # Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,16 @@ def ensure_divisibility(numerator, denominator):
     """Ensure that numerator is divisible by the denominator."""
     assert numerator % denominator == 0, '{} is not divisible by {}'.format(
         numerator, denominator)
+
+
+def initialize_groups(model_parallel_size_=1, expert_parallel_size_=1, mpu=None):
+    if mpu is not None:
+        initialize_model_and_expert_parallel(model_parallel_size_,
+                                             expert_parallel_size_,
+                                             mpu)
+    else:
+        initialize_model_parallel(model_parallel_size_)
+        initialize_expert_parallel(expert_parallel_size_)
 
 
 def initialize_model_parallel(model_parallel_size_):
@@ -81,7 +96,7 @@ def initialize_model_parallel(model_parallel_size_):
             _MODEL_PARALLEL_GROUP = group
 
 
-def initialize_expert_parallel(expert_parallel_size_, mpu=None):
+def initialize_expert_parallel(expert_parallel_size_):
     """
         Initialize expert plus data parallel groups.
 
@@ -98,18 +113,8 @@ def initialize_expert_parallel(expert_parallel_size_, mpu=None):
         print(
             '> initializing expert parallel with size {}'.format(expert_parallel_size_))
 
-    global _DATA_PARALLEL_GROUP
-
-    # Get world size and rank. Ensure some consistencies.
-    if mpu is None:
-        _DATA_PARALLEL_GROUP = torch.distributed.group.WORLD
-        world_size = torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
-    else:
-        _DATA_PARALLEL_GROUP = mpu.get_data_parallel_group()
-        _MODEL_PARALLEL_GROUP = mpu.get_model_parallel_group()
-        world_size = mpu.get_data_parallel_world_size()
-        rank = mpu.get_data_parallel_rank()
+    world_size = get_data_parallel_world_size()
+    rank = get_data_parallel_rank()
 
     expert_parallel_size_ = min(expert_parallel_size_, world_size)
     ensure_divisibility(world_size, expert_parallel_size_)
@@ -144,19 +149,76 @@ def initialize_expert_parallel(expert_parallel_size_, mpu=None):
             _EXPERT_PARALLEL_GROUP = group
 
 
-# TODO: Remove this placeholder. This is not needed since we are using mpu in the expert initialize now
-def initialize_model_and_expert_parallel(model_parallel_size_, expert_parallel_size_):
+def initialize_model_and_expert_parallel(model_parallel_size_,
+                                         expert_parallel_size_,
+                                         mpu):
     """
     Example - E + M + D parallel
     world_size = 16
     model_degree = 2
     expert_degree = 4 # number of experts in same group
     mp_group = [0, 1], [2,3], [4,5]...
-    expert_parallel_group = [0,1,2,3], [4,5,6,7] ...
-    expert_data_parallel_group = [0,4,8,12], [1,5,9,13], ...
     data_parallel_group = [0,2,4,6,8,10,12,14], [1,3,5,7,9,11,13,15]
+    expert_parallel_group = [0,2,4,6], [8,10,12,14] ...
+    expert_data_parallel_group = [0,8], [2,10], [4,12], [6,14] ...
     """
-    raise NotImplementedError()
+    assert torch.distributed.is_initialized(), "torch distributed is not initialized"
+    assert mpu.model_parallel_is_initialized(), "model parallel group is not initialized"
+    assert model_parallel_size_ == mpu.get_model_parallel_world_size
+
+    world_size = mpu.get_data_parallel_world_size()
+    rank = mpu.get_data_parallel_rank()
+
+    if torch.distributed.get_rank() == 0:
+        print(
+            f"Initializing deepspeed groups with model parallel size {model_parallel_size_}, \
+                expert parallel size {expert_parallel_size_}, and data parallel size {world_size}"
+        )
+
+    global _DATA_PARALLEL_GROUP, _MODEL_PARALLEL_GROUP
+    global _EXPERT_PARALLEL_GROUP, _EXPERT_DATA_PARALLEL_GROUP
+
+    # Get world size and rank. Ensure some consistencies.
+    _DATA_PARALLEL_GROUP = mpu.get_data_parallel_group()
+    _MODEL_PARALLEL_GROUP = mpu.get_model_parallel_group()
+
+    expert_parallel_size_ = min(expert_parallel_size_, world_size)
+    ensure_divisibility(world_size, expert_parallel_size_)
+
+    # Build the expert data parallel groups.
+    assert _EXPERT_DATA_PARALLEL_GROUP is None, \
+        'expert data parallel group is already initialized'
+    for i in range(expert_parallel_size_):
+        ranks = range(i, world_size, expert_parallel_size_)
+        group = torch.distributed.new_group(ranks)
+
+        # TODO: remove
+        if rank == 0:
+            print(
+                f'Creating Expert data parallel process group with ranks: {list(ranks)}')
+        if i == (rank % expert_parallel_size_):
+            _EXPERT_DATA_PARALLEL_GROUP = group
+
+    # Build the expert parallel groups.
+    global _EXPERT_PARALLEL_GROUP
+    assert _EXPERT_PARALLEL_GROUP is None, \
+        'expert parallel group is already initialized'
+    for i in range(world_size // expert_parallel_size_):
+        ranks = range(i * expert_parallel_size_, (i + 1) * expert_parallel_size_)
+        group = torch.distributed.new_group(ranks)
+
+        # TODO: remove
+        if rank == 0:
+            print(f'Creating Expert parallel process group with ranks: {list(ranks)}')
+        if i == (rank // expert_parallel_size_):
+            _EXPERT_PARALLEL_GROUP = group
+
+
+def is_initialized():
+    """Check if deepspeed groups have been initialized."""
+    if _MODEL_PARALLEL_GROUP is None or _DATA_PARALLEL_GROUP is None or _EXPERT_PARALLEL_GROUP is None or _EXPERT_DATA_PARALLEL_GROUP is None:
+        return False
+    return True
 
 
 def model_parallel_is_initialized():
@@ -254,6 +316,16 @@ def get_expert_data_parallel_rank():
 
 def get_expert_data_parallel_rank():
     """Return my rank for the expert data parallel group."""
+    return torch.distributed.get_rank(group=get_data_parallel_group())
+
+
+def get_data_parallel_world_size():
+    """Return world size for the data parallel group."""
+    return torch.distributed.get_world_size(group=get_data_parallel_group())
+
+
+def get_data_parallel_rank():
+    """Return my rank for the data parallel group."""
     return torch.distributed.get_rank(group=get_data_parallel_group())
 
 
