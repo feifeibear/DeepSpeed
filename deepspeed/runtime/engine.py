@@ -541,7 +541,7 @@ class DeepSpeedEngine(Module):
                 break
 
         if not groups.is_initialized():
-            groups.initialize(mpu)
+            groups.initialize(mpu=self.mpu)
 
         self.data_parallel_group = groups.get_data_parallel_group()
         self.dp_world_size = groups.get_data_parallel_world_size()

@@ -8,6 +8,7 @@ import torch.distributed as dist
 
 # import for sanity testing only
 #from .basic_moe import BasicMoE
+from deepspeed.utils import logger, log_dist
 
 import deepspeed.utils.groups as groups
 from .sharded_moe import MOELayer, TopKGate
@@ -22,11 +23,13 @@ class MoE(torch.nn.Module):
     def __init__(self, hidden_size, output_dropout_prob, expert, num_experts = 1, k = 1): 
         super(MoE, self).__init__()
 
-        assert groups.expert_parallel_is_initialized(), \
-            'Please call deepspeed.utils.groups.initialize_expert_parallel() before using MoE layers'
+        assert groups.is_initialized(), \
+            'Please call deepspeed.utils.groups.initialize() before using MoE layers'
 
-        print(f'NUM_EXPERTS: {num_experts} | EXP_PARALLEL_GROUP_SIZE: {groups.get_expert_parallel_world_size()}')
         num_local_experts = num_experts // groups.get_expert_parallel_world_size()
+        
+        log_dist(f'num_experts: {num_experts} | num_local_experts: {num_local_experts} | expert_parallel_size: {groups.get_expert_parallel_world_size()}', [0])
+
         self.num_experts = num_experts
         experts = Experts(expert, num_local_experts)
         # TODO Capacity factor needs to be configurable
