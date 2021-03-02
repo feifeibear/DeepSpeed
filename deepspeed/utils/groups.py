@@ -2,7 +2,7 @@
 Copyright 2021 The Microsoft DeepSpeed Team
 '''
 
-# The file has been adapated from https://github.com/NVIDIA/Megatron-LM and retains the following license from the original file
+# The file has been adapted from https://github.com/NVIDIA/Megatron-LM and retains the following license from the original file
 
 # Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -17,7 +17,6 @@ Copyright 2021 The Microsoft DeepSpeed Team
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Support, expert, data, and model (only megatron-style) parallelism in DeepSpeed
 
@@ -62,19 +61,24 @@ _EXPERT_DATA_PARALLEL_GROUP = None
 # Data parallel group that the current rank belongs to.
 _DATA_PARALLEL_GROUP = None
 
+
 def ensure_divisibility(numerator, denominator):
     """Ensure that numerator is divisible by the denominator."""
     assert numerator % denominator == 0, '{} is not divisible by {}'.format(
         numerator, denominator)
 
+
 def initialize(mp_size=1, ep_size=1, mpu=None):
+    """ if mpu is provided, intialize groups using mpu.
+        otherwise, we have two cases:
+        1. If called from DeepSpeed.initialize(), initialize groups with mp_size=1 and ep_size=1
+        2. If called from an application, initialize groups with mp_size=1 and ep_size=ep_size provided by the application
+    """
     if mpu is not None:
         log_dist(message="initializing deepspeed groups using mpu", ranks=[0])
         initialize_model_and_expert_parallel(mp_size, ep_size, mpu)
     else:
         log_dist(message="initializing deepspeed groups", ranks=[0])
-        # Passing mp_size=1 for this case as no model parallelism is needed.
-        # However, the groups are needed so we still call this function
         initialize_model_parallel(1)
         initialize_expert_parallel(ep_size)
 

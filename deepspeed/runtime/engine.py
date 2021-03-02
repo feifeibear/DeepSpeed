@@ -542,13 +542,20 @@ class DeepSpeedEngine(Module):
 
         if self.mpu is not None:
             if groups.is_initialized():
+                # Scenario 4 - Case 1
                 assert self.mpu.get_data_parallel_world_size() == groups.get_data_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
                 assert self.mpu.get_model_parallel_world_size() == groups.get_model_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
             else:
+                # Scenario 3
                 groups.initialize(mpu=self.mpu)
         else:
             if not groups.is_initialized():
+                # Scenario 1
                 groups.initialize()
+            #else:
+            # Scenario 2
+            # Scenario 4 - Case 2
+            # pass
 
         self.data_parallel_group = groups.get_data_parallel_group()
         self.dp_world_size = groups.get_data_parallel_world_size()
