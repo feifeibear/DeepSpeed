@@ -17,7 +17,38 @@ Copyright 2021 The Microsoft DeepSpeed Team
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Model, expert and data parallel groups."""
+
+"""
+Support, expert, data, and model (only megatron-style) parallelism in DeepSpeed
+
+Following are the possible scenarios:
+
+Scenario 1 : There is no expert parallelism or model parallelism (D)
+model = my_model(args)
+engine = deepspeed.init(model) ---> initialize groups without mpu
+
+Scenario 2 : There is expert parallelism but no model parallelism (E+D)
+deepspeed.init_groups(args) --> groups will be initialized here
+model = my_model(args)
+engine = deepspeed.init(model) --> don't initialize groups
+
+Scenario 3 : There is model parallelism but no expert parallelism (M)
+mpu.init()
+model = my_model(args)
+engine = deepspeed.init(model, mpu = mpu)  --> initialize groups with mpu but expert_parallel_size = dp_world_size
+
+Scenario 4 : There is model, data, and expert parallelism (E+D+M)
+mpu.init()
+deepspeed.init_groups(mpu, args)  ---> initialize groups with mpu
+model = my_model(args)
+
+#Valid but assert inside deepspeed to make sure mpu passed here is same as the one used to init the groups
+engine = deepspeed.init(model, mpu = mpu)
+
+#Also Valid
+engine = deepspeed.init(model)
+
+"""
 
 import torch
 from deepspeed.utils import logger, log_dist
@@ -31,15 +62,12 @@ _EXPERT_DATA_PARALLEL_GROUP = None
 # Data parallel group that the current rank belongs to.
 _DATA_PARALLEL_GROUP = None
 
-
 def ensure_divisibility(numerator, denominator):
     """Ensure that numerator is divisible by the denominator."""
     assert numerator % denominator == 0, '{} is not divisible by {}'.format(
         numerator, denominator)
 
-
 def initialize(mp_size=1, ep_size=1, mpu=None):
-
     if mpu is not None:
         log_dist(message="initializing deepspeed groups using mpu", ranks=[0])
         initialize_model_and_expert_parallel(mp_size, ep_size, mpu)

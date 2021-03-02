@@ -540,8 +540,15 @@ class DeepSpeedEngine(Module):
                 self.num_experts = module.num_experts
                 break
 
-        if not groups.is_initialized():
-            groups.initialize(mpu=self.mpu)
+        if self.mpu is not None:
+            if groups.is_initialized():
+                assert self.mpu.get_data_parallel_world_size() == groups.get_data_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
+                assert self.mpu.get_model_parallel_world_size() == groups.get_model_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
+            else:
+                groups.initialize(mpu=self.mpu)
+        else:
+            if not groups.is_initialized():
+                groups.initialize()
 
         self.data_parallel_group = groups.get_data_parallel_group()
         self.dp_world_size = groups.get_data_parallel_world_size()
@@ -551,6 +558,7 @@ class DeepSpeedEngine(Module):
         if self.has_moe_layers:
             # No assert needed because this will only be true if MoE Layer creation was successful
             self.expert_data_parallel_group = groups.get_expert_data_parallel_group()
+            self.ep_world_size = groups.get_expert_parallel_world_size()
             self.expert_broadcast_src_rank = _get_global_rank(
                 groups.get_expert_data_parallel_group(),
                 0)
