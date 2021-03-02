@@ -1,7 +1,8 @@
-# TODO: Update license and credits in this file
-# Code is modified and is based on MoE layer from https://github.com/lucidrains/mixture-of-experts
-# and alltoall modifications are based on Fairscale's MoE layer from:
-# https://github.com/facebookresearch/fairscale/tree/master/fairscale/nn/moe
+'''
+Copyright 2021 The Microsoft DeepSpeed Team
+'''
+# The file has been adapted from https://github.com/facebookresearch/fairscale and
+# retains the following license from the original file
 
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 #
@@ -11,7 +12,7 @@
 from typing import Callable, Dict, TYPE_CHECKING, Any, Optional, Tuple, Union, cast
 
 import time
-from time import perf_counter 
+from time import perf_counter
 import torch
 from torch import Tensor
 import torch.distributed as dist
@@ -24,6 +25,7 @@ else:
 
 gumbel_map: Dict[torch.device, Callable] = {}
 
+
 def gumbel_rsample(shape: Tuple, device: torch.device) -> Tensor:
     gumbel = gumbel_map.get(device)
     if gumbel is None:
@@ -33,15 +35,19 @@ def gumbel_rsample(shape: Tuple, device: torch.device) -> Tensor:
         gumbel_map[device] = gumbel
     return gumbel(shape)
 
+
 import torch.distributed as dist
 
 # einsum dimensions: (g)roup, (s)equence, (e)xpert, (m)odel, (c)apacity
 # See https://arxiv.org/pdf/2006.16668.pdf for details.
 
+
 # Based on https://github.com/pytorch/pytorch/pull/40762
 class _AllToAll(torch.autograd.Function):
     @staticmethod
-    def forward(ctx: Any, group: dist.ProcessGroup, input: Tensor) -> Tensor:  # type: ignore
+    def forward(ctx: Any,
+                group: dist.ProcessGroup,
+                input: Tensor) -> Tensor:  # type: ignore
         ctx.group = group
         input = input.contiguous()
         output = torch.empty_like(input)
@@ -52,12 +58,18 @@ class _AllToAll(torch.autograd.Function):
     def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor]:
         return (None, _AllToAll.apply(ctx.group, *grad_output))
 
+
 from torch import nn
 import torch.nn.functional as F
 
 import math
 
-def top1gating(logits: torch.Tensor, capacity_factor: float, noisy_gate: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+
+def top1gating(logits: torch.Tensor,
+               capacity_factor: float,
+               noisy_gate: bool = False) -> Tuple[Tensor,
+                                                  Tensor,
+                                                  Tensor]:
     """Implements Top1Gating on logits."""
     # everything is in fp32 in this function
     if noisy_gate:
@@ -107,7 +119,11 @@ def top1gating(logits: torch.Tensor, capacity_factor: float, noisy_gate: bool = 
 
     return l_aux, combine_weights, dispatch_mask
 
-def top2gating(logits: torch.Tensor, capacity_factor: float) -> Tuple[Tensor, Tensor, Tensor]:
+
+def top2gating(logits: torch.Tensor,
+               capacity_factor: float) -> Tuple[Tensor,
+                                                Tensor,
+                                                Tensor]:
     """Implements Top2Gating on logits."""
     # everything is in fp32 in this function
     # logits_fp32 = logits.to(torch.float32)
@@ -118,7 +134,7 @@ def top2gating(logits: torch.Tensor, capacity_factor: float) -> Tuple[Tensor, Te
     num_experts = gates.shape[1]
     # capacity = (2 * num_tokens // num_experts) * capacity_factor
     # round-up
-    capacity = math.ceil((2*num_tokens / num_experts) * capacity_factor)
+    capacity = math.ceil((2 * num_tokens / num_experts) * capacity_factor)
 
     # Create a mask for 1st's expert per token
     indices1_s = torch.argmax(gates, dim=1)
@@ -174,6 +190,7 @@ def top2gating(logits: torch.Tensor, capacity_factor: float) -> Tuple[Tensor, Te
 
     return l_aux, combine_weights, dispatch_mask
 
+
 class TopKGate(torch.nn.Module):
     """Gate module which implements Top2Gating as described in Gshard_.
     ::
@@ -192,8 +209,12 @@ class TopKGate(torch.nn.Module):
 
     wg: torch.nn.Linear
 
-    def __init__(self, model_dim: int, num_experts: int, k: int = 1,
-                 capacity_factor: float = 1.0, noisy_gate: bool = False) -> None:
+    def __init__(self,
+                 model_dim: int,
+                 num_experts: int,
+                 k: int = 1,
+                 capacity_factor: float = 1.0,
+                 noisy_gate: bool = False) -> None:
         super().__init__()
 
         # Only top-1 and top-2 are supported at the moment.
@@ -204,15 +225,22 @@ class TopKGate(torch.nn.Module):
         self.capacity_factor = capacity_factor
         self.noisy_gate = noisy_gate
 
-    def forward(self, input: torch.Tensor) -> Tuple[Tensor, Tensor, Tensor]:  # type: ignore
+    def forward(self,
+                input: torch.Tensor) -> Tuple[Tensor,
+                                              Tensor,
+                                              Tensor]:  # type: ignore
         if self.wg.weight.dtype != torch.float32:
             self.wg = self.wg.float()
             print("Cast gate weight to float 32")
         logits = self.wg(input.float())
         if self.k == 1:
+            # Disable noisy_gate for eval() mode
+            if self.training == False:
+                self.noisy_gate = False
             return top1gating(logits, self.capacity_factor, self.noisy_gate)
         else:
             return top2gating(logits, self.capacity_factor)
+
 
 class MOELayer(Base):
     """MOELayer module which implements MixtureOfExperts as described in Gshard_.
@@ -231,8 +259,11 @@ class MOELayer(Base):
         expert (torch.nn.Module):
             expert network
     """
-
-    def __init__(self, gate: Module, experts: Module, num_local_experts: int, group: Optional[Any] = None) -> None:
+    def __init__(self,
+                 gate: Module,
+                 experts: Module,
+                 num_local_experts: int,
+                 group: Optional[Any] = None) -> None:
         super().__init__()
         self.gate = gate
         self.experts = experts
@@ -250,7 +281,9 @@ class MOELayer(Base):
         # Reshape into S tokens by dropping sequence dimension.
         reshaped_input = input[0].reshape(-1, d_model)
         self.l_aux, combine_weights, dispatch_mask = self.gate(reshaped_input)
-        dispatched_input = torch.einsum("sec,sm->ecm", dispatch_mask.type_as(input[0]), reshaped_input)
+        dispatched_input = torch.einsum("sec,sm->ecm",
+                                        dispatch_mask.type_as(input[0]),
+                                        reshaped_input)
 
         #print(f"alltoall called at rank:{dist.get_rank()} with dispatched_input shape:{dispatched_input.shape}")
         a = time.perf_counter()
@@ -258,11 +291,18 @@ class MOELayer(Base):
         b = time.perf_counter()
         #print(f"alltoall took {b-a} seconds at rank:{dist.get_rank()}")
         # Re-shape after all-to-all: ecm -> gecm
-        dispatched_input = dispatched_input.reshape(self.world_size, self.num_local_experts, -1, d_model)
+        dispatched_input = dispatched_input.reshape(self.world_size,
+                                                    self.num_local_experts,
+                                                    -1,
+                                                    d_model)
         #print(f"reshaped input after alltoall called at rank:{dist.get_rank()} is dispatched_input shape:{dispatched_input.shape}")
         expert_output = self.experts(dispatched_input)
         expert_output = _AllToAll.apply(self.group, expert_output)
         # Re-shape back: gecm -> ecm
-        expert_output = expert_output.reshape(self.world_size * self.num_local_experts, -1, d_model)
-        combined_output = torch.einsum("sec,ecm->sm", combine_weights.type_as(input[0]), expert_output)
+        expert_output = expert_output.reshape(self.world_size * self.num_local_experts,
+                                              -1,
+                                              d_model)
+        combined_output = torch.einsum("sec,ecm->sm",
+                                       combine_weights.type_as(input[0]),
+                                       expert_output)
         return combined_output.reshape(input[0].shape)
